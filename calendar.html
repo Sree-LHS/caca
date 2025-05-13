@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>인터랙티브 캘린더</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            overscroll-behavior: none; /* Prevents pull-to-refresh on mobile during drag */
+        }
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 1px; /* Creates thin lines between cells */
+            background-color: #e5e7eb; /* Grid line color */
+            border: 1px solid #e5e7eb;
+        }
+        .calendar-cell {
+            min-height: 100px; /* Adjust as needed */
+            background-color: white;
+            position: relative; /* For absolute positioning of event count */
+            padding-top: 28px; /* Space for date number */
+        }
+        .calendar-cell.other-month {
+            background-color: #f3f4f6;
+            color: #9ca3af;
+        }
+        .date-number {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            font-size: 0.875rem;
+        }
+        .event-item {
+            padding: 2px 4px;
+            margin-bottom: 2px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: grab;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .priority-high { background-color: #fecaca; color: #b91c1c; }
+        .priority-medium { background-color: #fed7aa; color: #c2410c; }
+        .priority-low { background-color: #bbf7d0; color: #15803d; }
+
+        /* Modal styles */
+        .modal {
+            transition: opacity 0.3s ease;
+        }
+        .modal-content {
+            transition: transform 0.3s ease;
+        }
+        /* Ensure draggable items are visually distinct when dragging */
+        .dragging {
+            opacity: 0.5;
+            border: 2px dashed #007bff;
+        }
+        /* Style for view buttons */
+        .view-button {
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            background-color: #e5e7eb;
+            color: #374151;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        .view-button.active {
+            background-color: #3b82f6;
+            color: white;
+        }
+        .view-button:hover:not(.active) {
+            background-color: #d1d5db;
+        }
+        /* Ensure select dropdowns are visible */
+        select {
+            -webkit-appearance: menulist;
+            -moz-appearance: menulist;
+            appearance: menulist;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-4 md:p-8 select-none">
+    <div class="container mx-auto max-w-5xl bg-white shadow-xl rounded-lg p-4 md:p-6">
+        <div class="mb-6">
+            <div class="flex flex-col sm:flex-row justify-between items-center mb-4">
+                <h1 class="text-2xl sm:text-3xl font-bold text-gray-700" id="calendar-title"></h1>
+                <div class="flex space-x-1 sm:space-x-2 mt-2 sm:mt-0">
+                    <button id="prev-month" class="view-button">이전 달</button>
+                    <button id="next-month" class="view-button">다음 달</button>
+                    <button id="today" class="view-button">오늘</button>
+                </div>
+            </div>
+            <div class="flex justify-center space-x-1 sm:space-x-2 mb-4">
+                <button class="view-button" data-view="week" disabled title="구현 예정">주 보기</button>
+                <button class="view-button active" data-view="month">월 보기</button>
+                <button class="view-button" data-view="quarter" disabled title="구현 예정">분기 보기</button>
+                <button class="view-button" data-view="year" disabled title="구현 예정">1년 보기</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-7 gap-px text-center font-semibold text-gray-600 bg-gray-200 border border-gray-200">
+            <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+        </div>
+        <div id="calendar-grid" class="calendar-grid">
+            </div>
+
+        <div id="event-modal" class="modal fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 opacity-0 pointer-events-none z-50">
+            <div class="modal-content bg-white p-6 rounded-lg shadow-xl w-full max-w-md transform scale-95">
+                <h2 id="modal-title" class="text-xl font-semibold mb-4">이벤트 생성</h2>
+                <form id="event-form">
+                    <input type="hidden" id="event-id">
+                    <div class="mb-4">
+                        <label for="event-title" class="block text-sm font-medium text-gray-700">제목</label>
+                        <input type="text" id="event-title" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm p-2" required>
+                    </div>
+                    <div class="mb-4">
+                        <label for="event-description" class="block text-sm font-medium text-gray-700">설명</label>
+                        <textarea id="event-description" rows="3" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm p-2"></textarea>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="start-date" class="block text-sm font-medium text-gray-700">시작일</label>
+                            <input type="date" id="start-date" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm p-2" required>
+                        </div>
+                        <div>
+                            <label for="end-date" class="block text-sm font-medium text-gray-700">종료일</label>
+                            <input type="date" id="end-date" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm p-2">
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <input type="checkbox" id="no-end-date" class="mr-2 rounded text-blue-600 focus:ring-blue-500">
+                        <label for="no-end-date" class="text-sm text-gray-700">종료일 없음 (하루 종일)</label>
+                    </div>
+                    <div class="mb-4">
+                        <label for="event-priority" class="block text-sm font-medium text-gray-700">우선순위</label>
+                        <select id="event-priority" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm p-2">
+                            <option value="low">낮음</option>
+                            <option value="medium" selected>중간</option>
+                            <option value="high">높음</option>
+                        </select>
+                    </div>
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" id="delete-event-button" class="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 hidden">삭제</button>
+                        <button type="button" id="cancel-button" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50">취소</button>
+                        <button type="submit" id="save-button" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">저장</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const calendarGrid = document.getElementById('calendar-grid');
+        const calendarTitle = document.getElementById('calendar-title');
+        const eventModal = document.getElementById('event-modal');
+        const eventForm = document.getElementById('event-form');
+        const modalTitle = document.getElementById('modal-title');
+        const eventIdInput = document.getElementById('event-id');
+        const eventTitleInput = document.getElementById('event-title');
+        const eventDescriptionInput = document.getElementById('event-description');
+        const startDateInput = document.getElementById('start-date');
+        const endDateInput = document.getElementById('end-date');
+        const noEndDateCheckbox = document.getElementById('no-end-date');
+        const eventPriorityInput = document.getElementById('event-priority');
+        const deleteEventButton = document.getElementById('delete-event-button');
+
+        let currentDate = new Date();
+        let events = JSON.parse(localStorage.getItem('calendarEvents')) || [];
+        let draggedEvent = null; // To store the event being dragged
+
+        // --- Utility Functions ---
+        function formatDate(date) {
+            return date.toISOString().split('T')[0];
+        }
+
+        function getDaysInMonth(year, month) {
+            return new Date(year, month + 1, 0).getDate();
+        }
+
+        function getFirstDayOfMonth(year, month) {
+            return new Date(year, month, 1).getDay(); // 0 (Sun) - 6 (Sat)
+        }
+        
+        function saveEvents() {
+            localStorage.setItem('calendarEvents', JSON.stringify(events));
+        }
+
+        // --- Calendar Rendering ---
+        function renderCalendar() {
+            calendarGrid.innerHTML = ''; // Clear previous cells
+            const year = currentDate.getFullYear();
+            const month = currentDate.getMonth(); // 0-indexed
+
+            calendarTitle.textContent = `${year}년 ${month + 1}월`;
+
+            const firstDay = getFirstDayOfMonth(year, month);
+            const daysInMonth = getDaysInMonth(year, month);
+            const daysInPrevMonth = getDaysInMonth(year, month -1);
+
+
+            // Calculate number of cells needed for previous month's days
+            const prevMonthDaysToShow = firstDay;
+
+            // Render previous month's trailing days
+            for (let i = 0; i < prevMonthDaysToShow; i++) {
+                const day = daysInPrevMonth - prevMonthDaysToShow + i + 1;
+                const dateStr = formatDate(new Date(year, month - 1, day));
+                const cell = createCalendarCell(day, dateStr, true);
+                calendarGrid.appendChild(cell);
+            }
+            
+            // Render current month's days
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = formatDate(new Date(year, month, day));
+                const cell = createCalendarCell(day, dateStr, false);
+                calendarGrid.appendChild(cell);
+            }
+
+            // Calculate remaining cells to fill the grid (usually 6 rows * 7 cols = 42 cells)
+            const totalCells = 42; // Common for 6-row calendars
+            const renderedCells = prevMonthDaysToShow + daysInMonth;
+            const nextMonthDaysToShow = totalCells - renderedCells > 0 ? totalCells - renderedCells : ( (7 - (renderedCells % 7)) % 7 );
+
+
+            // Render next month's leading days
+            for (let i = 1; i <= nextMonthDaysToShow; i++) {
+                const dateStr = formatDate(new Date(year, month + 1, i));
+                const cell = createCalendarCell(i, dateStr, true);
+                calendarGrid.appendChild(cell);
+            }
+            renderEvents();
+        }
+
+        function createCalendarCell(day, dateStr, isOtherMonth) {
+            const cell = document.createElement('div');
+            cell.classList.add('calendar-cell', 'p-1.5', 'overflow-hidden', 'relative');
+            if (isOtherMonth) {
+                cell.classList.add('other-month');
+            }
+            
+            const dateNumber = document.createElement('span');
+            dateNumber.classList.add('date-number');
+            dateNumber.textContent = day;
+            cell.appendChild(dateNumber);
+
+            cell.dataset.date = dateStr;
+
+            // Highlight today
+            const todayStr = formatDate(new Date());
+            if (dateStr === todayStr && !isOtherMonth) {
+                dateNumber.classList.add('bg-blue-500', 'text-white', 'rounded-full', 'w-6', 'h-6', 'flex', 'items-center', 'justify-center');
+            }
+            
+            // Click to add event
+            cell.addEventListener('click', (e) => {
+                if (e.target.closest('.event-item')) return; // Don't open modal if clicking an event itself
+                openEventModal(dateStr);
+            });
+
+            // Drag and drop listeners for dates
+            cell.addEventListener('dragover', (e) => {
+                e.preventDefault(); // Allow dropping
+                cell.classList.add('bg-gray-200'); // Highlight drop target
+            });
+            cell.addEventListener('dragleave', () => {
+                cell.classList.remove('bg-gray-200');
+            });
+            cell.addEventListener('drop', (e) => {
+                e.preventDefault();
+                cell.classList.remove('bg-gray-200');
+                if (draggedEvent) {
+                    const targetDate = new Date(dateStr + 'T00:00:00'); // Ensure correct date parsing
+                    const originalStartDate = new Date(draggedEvent.startDate + 'T00:00:00');
+                    const originalEndDate = new Date(draggedEvent.endDate + 'T00:00:00');
+                    
+                    const duration = originalEndDate.getTime() - originalStartDate.getTime();
+                    
+                    draggedEvent.startDate = formatDate(targetDate);
+                    draggedEvent.endDate = formatDate(new Date(targetDate.getTime() + duration));
+                    
+                    saveEvents();
+                    renderCalendar(); // Re-render to show moved event
+                    draggedEvent = null;
+                }
+            });
+            return cell;
+        }
+
+        // --- Event Handling ---
+        function openEventModal(dateStr, eventToEdit = null) {
+            eventForm.reset();
+            if (eventToEdit) {
+                modalTitle.textContent = '이벤트 수정';
+                eventIdInput.value = eventToEdit.id;
+                eventTitleInput.value = eventToEdit.title;
+                eventDescriptionInput.value = eventToEdit.description;
+                startDateInput.value = eventToEdit.startDate;
+                endDateInput.value = eventToEdit.endDate;
+                eventPriorityInput.value = eventToEdit.priority;
+                noEndDateCheckbox.checked = eventToEdit.startDate === eventToEdit.endDate;
+                endDateInput.disabled = noEndDateCheckbox.checked;
+                deleteEventButton.classList.remove('hidden');
+            } else {
+                modalTitle.textContent = '이벤트 생성';
+                eventIdInput.value = '';
+                startDateInput.value = dateStr;
+                endDateInput.value = dateStr; // Default end date to start date
+                noEndDateCheckbox.checked = false;
+                endDateInput.disabled = false;
+                deleteEventButton.classList.add('hidden');
+            }
+            eventModal.classList.remove('opacity-0', 'pointer-events-none');
+            eventModal.querySelector('.modal-content').classList.remove('scale-95');
+            eventModal.querySelector('.modal-content').classList.add('scale-100');
+        }
+
+        function closeEventModal() {
+            eventModal.classList.add('opacity-0', 'pointer-events-none');
+            eventModal.querySelector('.modal-content').classList.add('scale-95');
+            eventModal.querySelector('.modal-content').classList.remove('scale-100');
+        }
+
+        eventForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const id = eventIdInput.value ? parseInt(eventIdInput.value) : Date.now();
+            const title = eventTitleInput.value.trim();
+            const description = eventDescriptionInput.value.trim();
+            let startDate = startDateInput.value;
+            let endDate = endDateInput.value;
+
+            if (!title || !startDate) {
+                alert('제목과 시작일은 필수입니다.');
+                return;
+            }
+
+            if (noEndDateCheckbox.checked || !endDate) {
+                endDate = startDate;
+            } else if (new Date(endDate) < new Date(startDate)) {
+                alert('종료일은 시작일보다 빠를 수 없습니다.');
+                return;
+            }
+            
+            const priority = eventPriorityInput.value;
+
+            const eventData = { id, title, description, startDate, endDate, priority };
+
+            const existingEventIndex = events.findIndex(ev => ev.id === id);
+            if (existingEventIndex > -1) {
+                events[existingEventIndex] = eventData; // Update
+            } else {
+                events.push(eventData); // Create
+            }
+            
+            saveEvents();
+            renderCalendar();
+            closeEventModal();
+        });
+
+        document.getElementById('cancel-button').addEventListener('click', closeEventModal);
+        
+        deleteEventButton.addEventListener('click', () => {
+            if (!eventIdInput.value) return;
+            const eventIdToDelete = parseInt(eventIdInput.value);
+            events = events.filter(event => event.id !== eventIdToDelete);
+            saveEvents();
+            renderCalendar();
+            closeEventModal();
+        });
+
+        noEndDateCheckbox.addEventListener('change', () => {
+            endDateInput.disabled = noEndDateCheckbox.checked;
+            if (noEndDateCheckbox.checked) {
+                endDateInput.value = startDateInput.value;
+            }
+        });
+        startDateInput.addEventListener('change', () => {
+            if (noEndDateCheckbox.checked) {
+                endDateInput.value = startDateInput.value;
+            }
+            // Ensure end date is not before start date
+            if (endDateInput.value && new Date(endDateInput.value) < new Date(startDateInput.value)) {
+                endDateInput.value = startDateInput.value;
+            }
+        });
+
+
+        function renderEvents() {
+            // Clear existing event elements
+            document.querySelectorAll('.event-item').forEach(el => el.remove());
+
+            events.forEach(event => {
+                const startDate = new Date(event.startDate + 'T00:00:00');
+                const endDate = new Date(event.endDate + 'T00:00:00');
+                
+                // Iterate from start to end date to display multi-day events
+                let currentDateIter = new Date(startDate);
+                while(currentDateIter <= endDate) {
+                    const dateStr = formatDate(currentDateIter);
+                    const cell = calendarGrid.querySelector(`.calendar-cell[data-date="${dateStr}"]`);
+                    if (cell && !cell.classList.contains('other-month')) { // Only render in current month's visible part
+                        const eventEl = document.createElement('div');
+                        eventEl.classList.add('event-item', `priority-${event.priority}`);
+                        eventEl.textContent = event.title;
+                        eventEl.draggable = true;
+                        eventEl.dataset.eventId = event.id;
+
+                        eventEl.addEventListener('dragstart', (e) => {
+                            draggedEvent = events.find(ev => ev.id == e.target.dataset.eventId);
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.target.classList.add('dragging'); // Add class for visual feedback
+                        });
+                        eventEl.addEventListener('dragend', (e) => {
+                            e.target.classList.remove('dragging'); // Clean up class
+                            // draggedEvent = null; // Already handled in drop
+                        });
+                        
+                        // Click on event to edit
+                        eventEl.addEventListener('click', (e) => {
+                            e.stopPropagation(); // Prevent cell click from firing
+                            const clickedEvent = events.find(ev => ev.id == e.target.dataset.eventId);
+                            if (clickedEvent) {
+                                openEventModal(clickedEvent.startDate, clickedEvent);
+                            }
+                        });
+                        cell.appendChild(eventEl);
+                    }
+                    currentDateIter.setDate(currentDateIter.getDate() + 1);
+                }
+            });
+        }
+
+        // --- Navigation ---
+        document.getElementById('prev-month').addEventListener('click', () => {
+            currentDate.setMonth(currentDate.getMonth() - 1);
+            renderCalendar();
+        });
+
+        document.getElementById('next-month').addEventListener('click', () => {
+            currentDate.setMonth(currentDate.getMonth() + 1);
+            renderCalendar();
+        });
+         document.getElementById('today').addEventListener('click', () => {
+            currentDate = new Date();
+            renderCalendar();
+        });
+
+
+        // --- Touch support for drag and drop (basic simulation) ---
+        let touchDraggedItem = null;
+        let touchStartX, touchStartY;
+
+        calendarGrid.addEventListener('touchstart', (e) => {
+            if (e.target.classList.contains('event-item')) {
+                touchDraggedItem = e.target;
+                const eventId = touchDraggedItem.dataset.eventId;
+                draggedEvent = events.find(ev => ev.id == eventId); // Set the global draggedEvent
+                
+                touchDraggedItem.classList.add('dragging');
+                
+                // To prevent page scrolling while dragging on touch devices
+                // document.body.style.overflow = 'hidden'; // Can cause layout shifts, use with caution or a class
+            }
+        }, { passive: true }); // Passive to allow default scroll if not an event item
+
+        calendarGrid.addEventListener('touchmove', (e) => {
+            if (!touchDraggedItem || !draggedEvent) return;
+            // e.preventDefault(); // Prevent scrolling IF an item is being dragged. This can be aggressive.
+            // For simplicity, we'll rely on the drop. More complex touch drag would involve moving the element visually.
+        }, { passive: false }); // Not passive if we want to preventDefault
+
+        calendarGrid.addEventListener('touchend', (e) => {
+            if (!touchDraggedItem || !draggedEvent) {
+                // document.body.style.overflow = ''; // Restore scrolling
+                return;
+            }
+
+            touchDraggedItem.classList.remove('dragging');
+            // document.body.style.overflow = ''; // Restore scrolling
+
+            const touch = e.changedTouches[0];
+            const targetElement = document.elementFromPoint(touch.clientX, touch.clientY);
+            const targetCell = targetElement ? targetElement.closest('.calendar-cell') : null;
+
+            if (targetCell && targetCell.dataset.date) {
+                const targetDateStr = targetCell.dataset.date;
+                
+                const targetDate = new Date(targetDateStr + 'T00:00:00');
+                const originalStartDate = new Date(draggedEvent.startDate + 'T00:00:00');
+                const originalEndDate = new Date(draggedEvent.endDate + 'T00:00:00');
+                const duration = originalEndDate.getTime() - originalStartDate.getTime();
+                
+                draggedEvent.startDate = formatDate(targetDate);
+                draggedEvent.endDate = formatDate(new Date(targetDate.getTime() + duration));
+                
+                saveEvents();
+                renderCalendar();
+            }
+            
+            touchDraggedItem = null;
+            draggedEvent = null; // Clear the global draggedEvent
+        });
+
+
+        // Initial Render
+        renderCalendar();
+    </script>
+</body>
+</html>
